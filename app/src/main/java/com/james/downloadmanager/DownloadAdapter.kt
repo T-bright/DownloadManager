@@ -1,6 +1,7 @@
 package com.james.downloadmanager
 
 import android.annotation.SuppressLint
+import android.util.Log
 import android.widget.ProgressBar
 import android.widget.TextView
 import com.chad.library.adapter.base.BaseQuickAdapter
@@ -10,9 +11,9 @@ import com.chad.library.adapter.base.BaseViewHolder
 class DownloadAdapter constructor(var datas: List<DownloadBean>) :
     BaseQuickAdapter<DownloadBean, BaseViewHolder>(R.layout.item_download, datas) {
 
-    fun setProgress(index: Int, progress: Float, downloadType: Int) {
+    fun setProgress(index: Int, progress: Float?, downloadType: Int) {
         var dataBean = datas[index]
-        dataBean.progress = progress
+        progress?.let { dataBean.progress = it }
         dataBean.downloadType = downloadType
         notifyItemChanged(index,"progress")
     }
@@ -24,6 +25,7 @@ class DownloadAdapter constructor(var datas: List<DownloadBean>) :
             holder.getView<ProgressBar>(R.id.progressBar).progress = databean.progress.toInt()
             holder.getView<TextView>(R.id.tvProgress).text = "${databean.progress}%"
             holder.getView<TextView>(R.id.tvDownloadType).text = "状态：${databean.downloadTypeText}"
+            holder.getView<TextView>(R.id.tvDownload).text = if(databean.isDownloadIng) "暂停" else "下载"
         } else {
             onBindViewHolder(holder, position)
         }
@@ -35,6 +37,7 @@ class DownloadAdapter constructor(var datas: List<DownloadBean>) :
         helper.getView<ProgressBar>(R.id.progressBar).progress = databean.progress.toInt()
         helper.getView<TextView>(R.id.tvProgress).text = "${databean.progress}%"
         helper.getView<TextView>(R.id.tvDownloadType).text = "状态：${databean.downloadTypeText}"
+        helper.getView<TextView>(R.id.tvDownload).text = if(databean.isDownloadIng) "暂停" else "下载"
     }
 
 }

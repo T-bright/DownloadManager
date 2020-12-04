@@ -1,5 +1,6 @@
 package com.james.net_module
 
+import android.util.Log
 import java.util.*
 
 /**
@@ -15,7 +16,7 @@ class Dispatcher constructor(maxDownloadCount: Int = 5) {
 
     /**
      * 将准备下载的任务队列[runningDownloadTasks]中的任务添加到
-     * 正在下载的任务队列[runningDownloadTasks] 中时的回调
+     * 正在下载的任务队列[runningDownloadTasks] 中时的回调，因为此时要开始执行下载任务了
      */
     var startDownload: ((downloadTask: DownloadTask) -> Unit)? = null
 
@@ -73,52 +74,25 @@ class Dispatcher constructor(maxDownloadCount: Int = 5) {
         }
     }
 
-    fun cancelByUrl(url: String): DownloadTask {
+
+    fun cancel(downloadTask: DownloadTask?): DownloadTask? {
         synchronized(this) {
-            var needCancelTask = finishByUrl(runningDownloadTasks, url)
-            if (needCancelTask == null) {
-                needCancelTask = finishByUrl(readyDownloadTasks, url)
-            }
-            if (needCancelTask == null) {
-                throw AssertionError("当前 DownloadTask 不在下载任务队列中")
-            }
-            cancelAfterPromote(needCancelTask)
-            return needCancelTask
-        }
-    }
+            if (downloadTask == null) return null
 
-    fun cancelByTag(tag: String): DownloadTask {
-        synchronized(this) {
-            var needCancelTask = finishByTag(runningDownloadTasks, tag)
-
-            if (needCancelTask == null) {
-                needCancelTask = finishByTag(readyDownloadTasks, tag)
-            }
-
-            if (needCancelTask == null) {
-                throw AssertionError("当前 DownloadTask 不在下载任务队列中")
-            }
-
-            cancelAfterPromote(needCancelTask)
-            return needCancelTask
-        }
-    }
-
-    fun cancel(downloadTask: DownloadTask): DownloadTask {
-        synchronized(this) {
             var needCancelTask = finish(runningDownloadTasks, downloadTask)
 
             if (needCancelTask == null) {
                 needCancelTask = finish(readyDownloadTasks, downloadTask)
             }
-
-            if (needCancelTask == null) {
-                throw AssertionError("当前 DownloadTask 不在下载任务队列中")
+            if (needCancelTask != null) {
+                cancelAfterPromote(needCancelTask)
             }
-
-            cancelAfterPromote(needCancelTask)
             return needCancelTask
         }
+    }
+
+    private fun finish(tasks: Deque<DownloadTask>, task: DownloadTask): DownloadTask? {
+        return if (tasks.remove(task)) task else null
     }
 
     /**
@@ -127,7 +101,13 @@ class Dispatcher constructor(maxDownloadCount: Int = 5) {
      */
     private fun cancelAfterPromote(needCancelTask: DownloadTask) {
         promote()
-        if (needCancelTask.isDownLoading()) {
+        Log.e("CCC","dispatcher type :${needCancelTask.downloadType}")
+        //下载完成了，
+        if(needCancelTask.downloadType != DownloadTask.COMPLETE && needCancelTask.downloadType != DownloadTask.ERROR){
+            /**
+             * 这行代码的意义是：通知 下载引擎 [OkHttpDownload] 取消下载任务。
+             * 如果是下载出错或者已经下载完成了，就不需要去通知了。 因为下载引擎那已经取消了相关的下载任务。
+             */
             cancelDownload?.invoke(needCancelTask)
         }
     }
@@ -144,28 +124,25 @@ class Dispatcher constructor(maxDownloadCount: Int = 5) {
         }
     }
 
-    /**
-     * 这个方法判断当前的下载任务十分已经加入到了队列中
-     */
-    fun containDownloadTask(downloadTask: DownloadTask): Boolean {
-        return runningDownloadTasks.contains(downloadTask) || readyDownloadTasks.contains(
-            downloadTask
-        )
-    }
-
-    fun findDownloadTask(downloadTask: DownloadTask): DownloadTask? {
-        return if (containDownloadTask(downloadTask)) downloadTask else null
-    }
-
     fun findDownloadTaskByUrl(url: String): DownloadTask? {
-        return find(runningDownloadTasks, null, url)?.let {
-            find(readyDownloadTasks, null, url)
+        synchronized(this) {
+            var findTask = find(runningDownloadTasks, null, url)
+
+            if (findTask == null) {
+                findTask = find(readyDownloadTasks, null, url)
+            }
+            return findTask
         }
     }
 
     fun findDownloadTaskByTag(tag: String): DownloadTask? {
-        return find(runningDownloadTasks, tag, null)?.let {
-            find(readyDownloadTasks, tag, null)
+        synchronized(this) {
+            var findTask = find(runningDownloadTasks, tag, null)
+
+            if (findTask == null) {
+                findTask = find(readyDownloadTasks, tag, null)
+            }
+            return findTask
         }
     }
 
@@ -178,29 +155,6 @@ class Dispatcher constructor(maxDownloadCount: Int = 5) {
         return needRemoveDownloadTask
     }
 
-    private fun finishByTag(tasks: Deque<DownloadTask>, tag: String): DownloadTask? {
-        var needRemoveDownloadTask: DownloadTask? = null
-        tasks.forEach {
-            if (it.tag == tag) {
-                needRemoveDownloadTask = finish(tasks, it)
-            }
-        }
-        return needRemoveDownloadTask
-    }
-
-    private fun finishByUrl(tasks: Deque<DownloadTask>, url: String): DownloadTask? {
-        var needRemoveDownloadTask: DownloadTask? = null
-        tasks.forEach {
-            if (it.url == url) {
-                needRemoveDownloadTask = finish(tasks, it)
-            }
-        }
-        return needRemoveDownloadTask
-    }
-
-    private fun finish(tasks: Deque<DownloadTask>, task: DownloadTask): DownloadTask? {
-        return if (tasks.remove(task)) task else null
-    }
 
     fun destroy() {
         cancelAll()

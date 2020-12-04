@@ -19,7 +19,7 @@
         android:id="@+id/allEnd"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="全部暂停"
+        android:text="全部取消"
         app:layout_constraintLeft_toRightOf="@id/allStart"
         app:layout_constraintRight_toRightOf="parent"
         app:layout_constraintTop_toTopOf="parent" />

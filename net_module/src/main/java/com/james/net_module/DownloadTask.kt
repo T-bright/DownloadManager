@@ -14,16 +14,26 @@ class DownloadTask private constructor(
     var headerMaps: Map<String, String> //header
 ) : Comparable<DownloadTask> {
     companion object {
-        const val DEFAULT = 0 //默认的状态，已经添加到下载队列，但还没开始下载
-        const val START = 1 //开始下载
-        const val CANCEL = 2 //取消下载
-        const val ERROR = 3 //下载错误
-        const val FINISH = 4 //下载完成
+        const val WAIT = 0 //等待下载的状态。这是默认的状态，已经添加到下载队列，但还没开始下载
+        const val START = 1 //开始下载。
+        const val PAUSE = 2 //暂停下载。暂停下载不会清空断点的相关信息。
+        const val CANCEL = 3 //取消下载。取消下载会将数据库的断点信息清空，下一次将会重新下载。
+        const val ERROR = 4 //下载错误。不会清空数据可以断点的相关信息
+        const val COMPLETE = 5 //下载完成。清空数据可以断点的相关信息
     }
 
-    var downloadType = DEFAULT
+    var downloadType = WAIT
     var totalLength: Long = 0
     var process: Long = 0
+
+    /**
+     * 是否支持断点下载。
+     *
+     * true：支持断点下载。
+     *
+     * false：不支持断点下载。如果不支持断点下载，应用层，应该禁止下载暂停的操作。
+     */
+    var isSupportBreakpointDownloads : Boolean = false
 
     //是否在正在下载
     fun isDownLoading(): Boolean {

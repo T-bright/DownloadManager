@@ -7,6 +7,9 @@ interface DownLoadEngine {
 
     fun cancel(downloadTask: DownloadTask)
 
+    fun pause(downloadTask: DownloadTask)
+
     fun cancelAll()
 
+    fun destroy()
 }

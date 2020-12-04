@@ -40,6 +40,12 @@ object DatabaseManager {
         }
     }
 
+    fun deleteBreakPoint(url: String){
+        synchronized(this) {
+            writableDatabase.execSQL("delete from $TABLE_NAME where url = '$url' ")
+        }
+    }
+
     fun close() {
         writableDatabase.close()
         databaseHelper.close()
