@@ -1,10 +1,12 @@
 package com.james.net_module
 
 import android.util.Log
+import com.james.net_module.db.DatabaseManager
 import com.james.net_module.okhttpdownload.OkHttpDownload
+import com.james.net_module.utils.Utils
 import java.io.File
 import java.lang.NullPointerException
-import java.util.ArrayDeque
+import java.util.concurrent.PriorityBlockingQueue
 import kotlin.Exception
 
 
@@ -34,15 +36,18 @@ class DownloadManager {
 
     private val downloadDispatcher by lazy {
         Dispatcher(maxDownloadCount).apply {
+            readyDownload = {
+                downloadCallback?.onWait(it)
+            }
+
             startDownload = {
                 downLoadEngine?.startDownload(it, defaultDownloadCallback!!)
             }
 
             cancelDownload = {
-                if(it.downloadType == DownloadTask.CANCEL){
+                if (it.downloadType == DownloadTask.CANCEL) {
                     downLoadEngine?.cancel(it)
-                }else{
-                    Log.e("CCC","2 pause")
+                } else {
                     downLoadEngine?.pause(it)
                 }
             }
@@ -59,8 +64,7 @@ class DownloadManager {
     }
 
     /**
-     * 设置自定义下载引擎。默认的下载引擎是 OkHttpDownload
-     * @see com.tbright.ktbaselibrary.net.download.OkHttpDownload
+     * 设置自定义下载引擎。默认的下载引擎是 [OkHttpDownload]
      */
     fun setDownLoadEngine(downLoadEngine: DownLoadEngine?): DownloadManager {
         this.downLoadEngine = downLoadEngine
@@ -117,39 +121,80 @@ class DownloadManager {
      * 取消下载
      */
     private fun cancel(downloadTask: DownloadTask?): DownloadTask? {
-        if(downloadTask != null){
-            downloadTask?.downloadType = DownloadTask.CANCEL
-            return downloadDispatcher.cancel(downloadTask)
-        }else{
-            //TODO 这里有一个bug，就是先暂停了，是找不到下载任务的，所以点击取消按钮，会没有反应。
-            // 这里特俗处理一下。将结果回调出去，同时在暂停任务中找到暂停任务，清理掉相关的数据库信息
-            return null
+        downloadTask?.downloadType = DownloadTask.CANCEL
+        return downloadDispatcher.cancel(downloadTask)
+    }
+
+    /**
+     * 通过下载的url来取消下载
+     * @param url:下载的url
+     */
+    fun cancelByUrl(url: String): DownloadTask? {
+        var downloadTask = findDownloadTaskByUrl(url)
+        if (downloadTask == null) {//如果为空，说明当前任务已经被暂停了。此时要到暂停的任务队列中去找。同时还要清除掉相关的数据库信息
+            downloadTask = findPauseDownload(null, url)
+            if(downloadTask == null){
+                this.downloadCallback?.onError(DownloadTask.Build(url).build(),NullPointerException("未找到当前url链接的下载任务：${url}"))
+                return null
+            }
+            //下载任务在暂停队列中，说明本地数据库是有保存下载的信息的，此时需要清除数据库中的信息。
+            DatabaseManager.deleteBreakPointByUrl(Utils.md5(url))
+            downloadTask.downloadType = DownloadTask.CANCEL
+            this.downloadCallback?.onCancel(downloadTask)
+            return downloadTask
+        } else {//不为空，说明下载任务还在 Dispatcher 的两个下载任务队列中
+            return cancel(downloadTask)
         }
     }
 
     /**
-     * 取消下载
-     */
-    fun cancelByUrl(url: String): DownloadTask? {
-        return cancel(findDownloadTaskByUrl(url))
-    }
-
-    /**
-     * 取消下载
+     * 如果之前设置了tag，可以通过tag取消下载。如果之前没有设置tag，则没法取消下载。这个需要注意。
+     * @param tag：下载时设置的tag。
      */
     fun cancelByTag(tag: String): DownloadTask? {
-        return cancel(findDownloadTaskByTag(tag))
+        var downloadTask = findDownloadTaskByTag(tag)
+        if (downloadTask == null) {//如果为空，说明当前任务已经被暂停了。此时要到暂停的任务队列中去找。
+            downloadTask = findPauseDownload(tag, null)
+            if(downloadTask == null){
+                this.downloadCallback?.onError(DownloadTask.Build("").setTag(tag).build(),NullPointerException("通过tag没有找到相关的下载任务，请确保当前的下载任务已经设置了tag。"))
+                return null
+            }
+            //下载任务在暂停队列中，说明本地数据库是有保存下载的信息的，此时需要清除数据库中的信息。
+            DatabaseManager.deleteBreakPointByTag(tag)
+            downloadTask.downloadType = DownloadTask.CANCEL
+            this.downloadCallback?.onCancel(downloadTask)
+            return downloadTask
+        } else {//不为空，说明下载任务还在 Dispatcher 的两个下载任务队列中
+            return cancel(downloadTask)
+        }
     }
 
     /**
      * 取消所有下载
      */
     fun cancelAll() {
-        downloadDispatcher.cancelAll()
+        val iteratorReady = downloadDispatcher.getReadyDownloadTasks().iterator()
+        while (iteratorReady.hasNext()){
+            cancel(iteratorReady.next())
+        }
+
+        val iteratorRunning = downloadDispatcher.getRunningDownloadTasks().iterator()
+        while (iteratorRunning.hasNext()){
+            cancel(iteratorRunning.next())
+        }
+
+        val iteratorPause = pauseDownloadCaches.iterator()
+        while (iteratorPause.hasNext()){
+            val pauseDownloadTask = iteratorPause.next()
+            this.downloadCallback?.onCancel(pauseDownloadTask)
+            DatabaseManager.deleteBreakPointByUrl(Utils.md5(pauseDownloadTask.url))
+            iteratorPause.remove()
+        }
+
     }
 
     //暂停下载时的缓存
-    private val pauseDownloadCaches = ArrayDeque<DownloadTask>()
+    private val pauseDownloadCaches = PriorityBlockingQueue<DownloadTask>()
 
     /**暂停下载*/
     fun pauseByTag(tag: String) {
@@ -161,46 +206,78 @@ class DownloadManager {
         pause(findDownloadTaskByUrl(url))
     }
 
-    /**暂停下载*/
-    private fun pause(pauseDownloadTask: DownloadTask?) {
-        //不是下载状态，就不执行暂停操作了
-        if(pauseDownloadTask?.isDownLoading() == false) return
-        Log.e("CCC","1 pause")
-        //如果支持断点下载，就可以执行暂停操作。如果不支持断点下载，给一个异常
-        if(pauseDownloadTask?.isSupportBreakpointDownloads == true){
-            pauseDownloadTask.downloadType = DownloadTask.PAUSE
-            pauseDownloadCaches.add(pauseDownloadTask)
-            downloadDispatcher.cancel(pauseDownloadTask)
-        }else{
-            pauseDownloadTask?.let { downloadCallback?.onPause(it, NullPointerException()) }
+    /**
+     * 暂停全部下载
+     */
+    fun pauseAll(){
+        val iteratorReady = downloadDispatcher.getReadyDownloadTasks().iterator()
+        while (iteratorReady.hasNext()){
+            pause(iteratorReady.next())
         }
+
+        val iteratorRunning = downloadDispatcher.getRunningDownloadTasks().iterator()
+        while (iteratorRunning.hasNext()){
+            pause(iteratorRunning.next())
+            Log.e("CCC","size: ${downloadDispatcher.getRunningDownloadTasks().size}")
+        }
+    }
+
+    /**
+     *暂停下载
+     */
+    private fun pause(pauseDownloadTask: DownloadTask?) {
+        if(pauseDownloadTask?.isDownLoading() == true){
+            //如果支持断点下载，就可以执行暂停操作。如果不支持断点下载，给一个异常
+            if (pauseDownloadTask.isSupportBreakpointDownloads) {
+                pauseDownloadTask.downloadType = DownloadTask.PAUSE
+                downloadDispatcher.cancel(pauseDownloadTask)
+                pauseDownloadCaches.add(pauseDownloadTask)
+            } else {
+                pauseDownloadTask.let { downloadCallback?.onError(it, UnsupportedOperationException("当前下载链接不支持断点下载：${it.url}")) }
+            }
+        }else{
+            pauseDownloadTask?.downloadType = DownloadTask.PAUSE
+            downloadDispatcher.cancel(pauseDownloadTask)
+            pauseDownloadCaches.add(pauseDownloadTask)
+        }
+
     }
 
 
     /**开始下载*/
     fun resumeByTag(tag: String) {
-        val iterator = pauseDownloadCaches.iterator()
-        while (iterator.hasNext()) {
-            val downloadTask = iterator.next()
-            if (downloadTask.tag == tag) {
-                iterator.remove()
-                downloadDispatcher.enqueue(downloadTask)
-                break
-            }
+        findPauseDownload(tag, null)?.let {
+            downloadDispatcher.enqueue(it)
         }
     }
 
-    /**开始下载*/
+    /**继续下载*/
     fun resumeByUrl(url: String) {
+        findPauseDownload(null, url)?.let {
+            downloadDispatcher.enqueue(it)
+        }
+    }
+
+    /**全部继续下载*/
+    fun resumeAll(){
+        pauseDownloadCaches.forEach {
+            downloadDispatcher.enqueue(it)
+        }
+        pauseDownloadCaches.clear()
+    }
+
+    private fun findPauseDownload(tag: String?, url: String?): DownloadTask? {
+        var pauseDownloadCache: DownloadTask? = null
         val iterator = pauseDownloadCaches.iterator()
         while (iterator.hasNext()) {
             val downloadTask = iterator.next()
-            if (downloadTask.url == url) {
+            if (downloadTask.url == url || downloadTask.tag == tag) {
                 iterator.remove()
-                downloadDispatcher.enqueue(downloadTask)
+                pauseDownloadCache = downloadTask
                 break
             }
         }
+        return pauseDownloadCache
     }
 
     /**
@@ -223,6 +300,9 @@ class DownloadManager {
         return downloadDispatcher.findDownloadTaskByTag(tag)
     }
 
+    fun getDownloadTaskSize() :Int{
+        return downloadDispatcher.getReadyDownloadTasks().size + downloadDispatcher.getRunningDownloadTasks().size
+    }
 
     fun destroy() {
         downloadDispatcher.destroy()
@@ -245,15 +325,15 @@ class DownloadManager {
             downloadCallback?.onProgress(task, currentOffset, totalLength)
         }
 
-        override fun onPause(task: DownloadTask, e: Exception?) {
-            downloadCallback?.onPause(task, e)
+        override fun onPause(task: DownloadTask) {
+            downloadCallback?.onPause(task)
         }
 
         override fun onCancel(task: DownloadTask) {
             downloadCallback?.onCancel(task)
         }
 
-        override fun onError(task: DownloadTask, e: Exception?) {
+        override fun onError(task: DownloadTask?, e: Exception?) {
             downloadCallback?.onError(task, e)
             downloadDispatcher.cancel(task)
         }

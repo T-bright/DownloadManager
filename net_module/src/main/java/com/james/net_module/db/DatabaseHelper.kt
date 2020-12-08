@@ -16,6 +16,7 @@ class DatabaseHelper constructor(
     override fun onCreate(db: SQLiteDatabase?) {
         val sql = "create table $TABLE_NAME (" +
                 "url TEXT NOT NULL ," + //下载的链接地址。这里的url用md5处理了下
+                "tag TEXT NOT NULL ," + //下载任务的标识。如果用户不指定，这个默认是md5处理的url。
                 "start_point LONG NOT NULL," + //开始下载断点的位置
                 "end_point LONG NOT NULL," + //结束下载断点的位置
                 "blockId LONG NOT NULL," + //多线程下载时候，分块的id

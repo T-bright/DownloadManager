@@ -22,10 +22,11 @@ object DatabaseManager {
             while (cursor?.moveToNext() == true) {
                 val breakPointInfo = BreakPointInfo()
                 breakPointInfo.url = cursor.getString(0)
-                breakPointInfo.startPoint = cursor.getLong(1)
-                breakPointInfo.endPoint = cursor.getLong(2)
-                breakPointInfo.blockId = cursor.getLong(3)
-                breakPointInfo.eTag = cursor.getString(4)
+                breakPointInfo.tag = cursor.getString(1)
+                breakPointInfo.startPoint = cursor.getLong(2)
+                breakPointInfo.endPoint = cursor.getLong(3)
+                breakPointInfo.blockId = cursor.getLong(4)
+                breakPointInfo.eTag = cursor.getString(5)
                 resultList.add(breakPointInfo)
             }
             cursor.close()
@@ -34,15 +35,20 @@ object DatabaseManager {
     }
 
     //添加断点
-    fun addBreakPoint(url: String,startPoint:Long,endPoint:Long,blockId:Long,eTag: String) {
+    fun addBreakPoint(url: String,tag :String,startPoint:Long,endPoint:Long,blockId:Long,eTag: String) {
         synchronized(this) {
-            writableDatabase.execSQL("replace into $TABLE_NAME ( url,start_point,end_point,blockId,eTag ) values ('${url}','${startPoint}','${endPoint}','${blockId}','${eTag}')")
+            writableDatabase.execSQL("replace into $TABLE_NAME ( url,tag,start_point,end_point,blockId,eTag ) values ('${url}','${tag}','${startPoint}','${endPoint}','${blockId}','${eTag}')")
         }
     }
 
-    fun deleteBreakPoint(url: String){
+    fun deleteBreakPointByUrl(url: String){
         synchronized(this) {
             writableDatabase.execSQL("delete from $TABLE_NAME where url = '$url' ")
+        }
+    }
+    fun deleteBreakPointByTag(tag: String){
+        synchronized(this) {
+            writableDatabase.execSQL("delete from $TABLE_NAME where tag = '$tag' ")
         }
     }
 

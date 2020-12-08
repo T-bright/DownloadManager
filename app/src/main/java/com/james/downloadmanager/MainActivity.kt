@@ -5,6 +5,7 @@ import android.os.Build
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Log
+import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.james.net_module.DownloadCallback
@@ -30,10 +31,9 @@ class MainActivity : AppCompatActivity() {
     private val downloadFileUrl4 =
         "https://fga1.market.xiaomi.com/download/AppStore/0b1924faf32e7ead14c7ad8ade55e322aa440afa0/com.tencent.gamehelper.speed.apk"
 
-    private val downloadFileUrl5 = "http://61.191.199.181:22003/upload/file/8c0/10/8/b44c6eb01c01000/5a2637580e0.mp3"
 
     private val dataLists =
-        arrayListOf(DownloadBean(downloadFileUrl5)
+        arrayListOf(DownloadBean(downloadFileUrl1)
             , DownloadBean(downloadFileUrl2)
             , DownloadBean(downloadFileUrl3)
             , DownloadBean(downloadFileUrl4)
@@ -43,9 +43,9 @@ class MainActivity : AppCompatActivity() {
     private val myAdapter by lazy {
         DownloadAdapter(dataLists).apply {
             setOnItemChildClickListener { adapter, view, position ->
+                var data = dataLists[position]
                 when(view.id){
                     R.id.tvDownload->{//暂停或者开始下载
-                        var data = dataLists[position]
                         if(data.isDownloadIng){
                             downloadManager.pauseByTag("$position")
                         }
@@ -57,7 +57,11 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     R.id.tvCancel->{//取消下载
-                        downloadManager.cancelByTag("$position")
+                        if(data.downloadType == DownloadTask.PAUSE || data.downloadType == DownloadTask.START){
+                            downloadManager.cancelByTag("$position")
+                        }else{
+                            Toast.makeText(this@MainActivity, "只有正在下载和暂停下载的任务才能取消", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
             }
@@ -71,16 +75,27 @@ class MainActivity : AppCompatActivity() {
         requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE,Manifest.permission.READ_EXTERNAL_STORAGE),2)
         rv.layoutManager = LinearLayoutManager(this)
         rv.adapter = myAdapter
-
         allStart.setOnClickListener {
-            allDownload()
+            if(allStart.text.toString() == "全部下载"){
+                allStart.text = "全部暂停"
+                allDownload()
+            }else if(allStart.text.toString() == "全部暂停"){
+                allStart.text = "全部继续"
+                downloadManager.pauseAll()
+            }else  if(allStart.text.toString() == "全部继续"){
+                allStart.text = "全部暂停"
+                downloadManager.resumeAll()
+            }
         }
         allEnd.setOnClickListener {
+            allStart.text = "全部下载"
             downloadManager.cancelAll()
         }
     }
 
-    var downloadManager = DownloadManager()
+    var downloadManager = DownloadManager().apply {
+        setMaxDownloadCount(2)
+    }
 
     private var type = 0
     private var mainScope = MainScope()
@@ -95,9 +110,13 @@ class MainActivity : AppCompatActivity() {
     fun download(index :Int,downloadBean :DownloadBean){
         var fileName = downloadBean.url.substringAfterLast('/', "")
         myAdapter.setProgress(index,0.00f,DownloadTask.START)
-        downloadManager.addTask(downloadBean.url, File(cacheDir.absolutePath,fileName),"$index",0,object :DownloadCallback{
+        downloadManager.addTask(downloadBean.url, File(cacheDir.absolutePath,fileName),"$index",index,object :DownloadCallback{
+            //在wait和start阶段就要拿到之前下载的断点的点
             override fun onWait(task: DownloadTask) {
-
+                Log.e("AAA","onWait :${task.tag.toInt()}")
+                mainScope.launch(Dispatchers.Main) {
+                    myAdapter.setProgress(task.tag.toInt(),null,DownloadTask.WAIT)
+                }
             }
 
             override fun onStart(task: DownloadTask) {
@@ -110,13 +129,14 @@ class MainActivity : AppCompatActivity() {
             override fun onProgress(task: DownloadTask, currentOffset: Long, totalLength: Long) {
                 mainScope.launch(Dispatchers.Main) {
                     var progress = (task.process * 1.0f / task.totalLength * 100)
-                    Log.e("AAA","onProgress :${task.tag.toInt()} ：progress ：${progress}")
+//                    Log.e("AAA","onProgress :${task.tag.toInt()} ：progress ：${progress}")
                     myAdapter.setProgress(task.tag.toInt(),progress,DownloadTask.START)
                 }
 
             }
 
-            override fun onPause(task: DownloadTask, e: Exception?) {
+            override fun onPause(task: DownloadTask) {
+                Log.e("AAA","onPause :${task.tag.toInt()}")
                 mainScope.launch(Dispatchers.Main) {
                     myAdapter.setProgress(task.tag.toInt(),null,DownloadTask.PAUSE)
                 }
@@ -129,11 +149,10 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            override fun onError(task: DownloadTask, e: Exception?) {
-                Log.e("AAA","error :${task.tag.toInt()}")
+            override fun onError(task: DownloadTask?, e: Exception?) {
+                Log.e("AAA","error :${task?.tag?.toInt()}")
                 mainScope.launch(Dispatchers.Main) {
-                    var progress = (task.process * 1.0f / task.totalLength * 100)
-                    myAdapter.setProgress(task.tag.toInt(),progress,DownloadTask.ERROR)
+                    myAdapter.setProgress(task?.tag?.toInt()?:0,null,DownloadTask.ERROR)
                 }
             }
 
@@ -144,5 +163,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+
     }
 }

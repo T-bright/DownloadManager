@@ -1,6 +1,6 @@
 package com.james.net_module.okhttpdownload
 
-import android.util.Log
+import android.text.TextUtils
 import com.james.net_module.DownLoadEngine
 import com.james.net_module.DownloadCallback
 import com.james.net_module.DownloadTask
@@ -45,8 +45,6 @@ class OkHttpDownload : DownLoadEngine {
 
     override fun startDownload(downloadTask: DownloadTask, callback: DownloadCallback) {
         this.downloadCallback = callback
-        downloadTask.downloadType = DownloadTask.WAIT
-        downloadCallback?.onWait(downloadTask)
 
         //添加相关的Header信息
         val headersBuilder = Headers.Builder()
@@ -66,12 +64,12 @@ class OkHttpDownload : DownLoadEngine {
 
         callCaches[url] = call
         downloadTasks[url] = downloadTask
-
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                val nowTask = downloadTasks[call.request().url().toString()]!!
-                nowTask.downloadType = DownloadTask.ERROR
-                finish(nowTask, e)
+                downloadTasks[call.request().url().toString()]?.let {
+                    it.downloadType = DownloadTask.ERROR
+                    finish(it, e)
+                }
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -98,7 +96,7 @@ class OkHttpDownload : DownLoadEngine {
                         }
                     }
                     nowTask.isSupportBreakpointDownloads = isSupportBreakpointDownloads
-                    parseStream(inputStream, isSupportBreakpointDownloads, nowTask, process, totalLength,eTag)
+                    parseStream(inputStream, isSupportBreakpointDownloads, nowTask, process, totalLength, eTag)
                 }
             }
         })
@@ -112,7 +110,7 @@ class OkHttpDownload : DownLoadEngine {
      * @param totalLength：断点之后文件总大小。如果是从文件开始的地方开始下载，这个长度就是整个文件的大小
      * @param eTag：用来判断服务器的文件是否发生了变化
      */
-    private fun parseStream(inputStream: InputStream, isSupportBreakpointDownloads: Boolean, downloadTask: DownloadTask, currentLength: Long,totalLength :Long ,eTag: String) {
+    private fun parseStream(inputStream: InputStream, isSupportBreakpointDownloads: Boolean, downloadTask: DownloadTask, currentLength: Long, totalLength: Long, eTag: String) {
         val buffer = ByteArray(downloadTask.bufferSize)
         var process = currentLength
         var allFileLength = totalLength + currentLength
@@ -126,58 +124,70 @@ class OkHttpDownload : DownLoadEngine {
         var channelOut = randomAccessFile.channel
         var mappedBuffer = channelOut.map(FileChannel.MapMode.READ_WRITE, process, allFileLength)
         var urlMd5 = Utils.md5(downloadTask.url)
+
+        //tag下载任务的标识。如果用户不指定，这个默认是md5处理的url。
+        //这个保存在数据库里，目的是用来通过tag处理取消下载时，删除本地数据库的信息。默认将他设置成md5处理的url，防止被误删。
+        val tag = if (TextUtils.isEmpty(downloadTask.tag)) urlMd5 else downloadTask.tag
+        var exception : Exception? = null
         try {
             var len = inputStream.read(buffer)
             while (len != -1) {
                 if (downloadTask.isDownLoading()) {
                     process += len
                     if (isSupportBreakpointDownloads) {
-                        DatabaseManager.addBreakPoint(urlMd5, process, allFileLength, 1, eTag)
+                        DatabaseManager.addBreakPoint(urlMd5, tag, process, allFileLength, 1, eTag)
                     }
                     downloadTask.process = process
                     downloadCallback?.onProgress(downloadTask, process, allFileLength)
-                    mappedBuffer.put(buffer,0,len)
+                    mappedBuffer.put(buffer, 0, len)
                     len = inputStream.read(buffer)
-                }else{
+                } else {
                     break
                 }
             }
         } catch (e: Exception) {
             e.printStackTrace()
-        }finally {
+            if (downloadTask.downloadType != DownloadTask.PAUSE && downloadTask.downloadType != DownloadTask.CANCEL) {
+                downloadTask.downloadType = DownloadTask.ERROR
+                exception = e
+            }
+        } finally {
             channelOut.close()
             randomAccessFile.close()
             inputStream.close()
             if (process == allFileLength) {
                 downloadTask.downloadType = DownloadTask.COMPLETE
-                DatabaseManager.deleteBreakPoint(urlMd5)
-                finish(downloadTask)
             }
-            Log.e("CCC","${downloadTask.downloadType} -- process:${process}-----allFileLength:${allFileLength}")
+
+            //下载完成或者取消下载。要删除数据库中的信息
+            if(downloadTask.downloadType == DownloadTask.COMPLETE || downloadTask.downloadType == DownloadTask.CANCEL){
+                DatabaseManager.deleteBreakPointByUrl(urlMd5)
+            }
+
+            finish(downloadTask,exception)
         }
     }
 
     override fun cancel(downloadTask: DownloadTask) {
         downloadTask.downloadType = DownloadTask.CANCEL
-        DatabaseManager.deleteBreakPoint(Utils.md5(downloadTask.url))
         finish(downloadTask)
     }
 
     override fun pause(downloadTask: DownloadTask) {
-        Log.e("CCC","okhttp pause")
         downloadTask.downloadType = DownloadTask.PAUSE
         finish(downloadTask)
     }
 
     override fun cancelAll() {
-        callCaches.values.forEach {
-            it.cancel()
+        downloadTasks.values.forEach {
+            cancel(it)
         }
-        callCaches.clear()
     }
 
     override fun destroy() {
-        cancelAll()
+        callCaches.values.forEach {
+            it.cancel()
+        }
     }
 
     private fun finish(downloadTask: DownloadTask, e: Exception? = null) {
@@ -186,7 +196,7 @@ class OkHttpDownload : DownLoadEngine {
         callCaches.remove(url)
         downloadTasks.remove(url)
         when (downloadTask.downloadType) {
-            DownloadTask.PAUSE -> downloadCallback?.onPause(downloadTask, e)
+            DownloadTask.PAUSE -> downloadCallback?.onPause(downloadTask)
             DownloadTask.CANCEL -> downloadCallback?.onCancel(downloadTask)
             DownloadTask.ERROR -> downloadCallback?.onError(downloadTask, e)
             DownloadTask.COMPLETE -> downloadCallback?.onComplete(downloadTask)

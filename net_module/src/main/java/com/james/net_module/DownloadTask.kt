@@ -48,6 +48,9 @@ class DownloadTask private constructor(
         private var bufferSize = 16384 //byte
         private var tag = "" //下载的标识
         private var filePath = ""
+        constructor(url: String){
+            this.url = url
+        }
         constructor(url: String, filePath: String) {
             this.url = url
             this.uri = Utils.file2Uri(File(filePath))
@@ -62,6 +65,23 @@ class DownloadTask private constructor(
 
         constructor(url: String, uri: Uri) {
             this.url = url
+            this.uri = uri
+            if (Utils.isUriContentScheme(uri)) {
+                this.filePath = Utils.uri2FileName(uri).orEmpty()
+            }
+        }
+
+        fun setFilePath(filePath: String){
+            this.filePath = filePath
+            this.uri = Utils.file2Uri(File(filePath))
+        }
+
+        fun setFile(file: File){
+            this.uri = Utils.file2Uri(file)
+            this.filePath = file.absolutePath
+        }
+
+        fun setUri(uri: Uri){
             this.uri = uri
             if (Utils.isUriContentScheme(uri)) {
                 this.filePath = Utils.uri2FileName(uri).orEmpty()
@@ -101,6 +121,6 @@ class DownloadTask private constructor(
     }
 
     override fun compareTo(other: DownloadTask): Int {
-        return other.priority - this.priority
+        return this.priority - other.priority
     }
 }
