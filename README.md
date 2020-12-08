@@ -1,5 +1,8 @@
 # DownloadManager
 Android基于Okhttp的一个上传、下载框架
+先上效果图
+![image](https://github.com/T-bright/DownloadManager/blob/main/pic/a.gif)
+
 
 这个主要库提供上传、下载功能。
 - 上传：主要使用kotlin+协程+retrofit
